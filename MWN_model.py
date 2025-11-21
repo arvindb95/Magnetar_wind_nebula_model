@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.special import kn, kv
-from scipy.integrate import quad
+from scipy.integrate import quad, trapezoid
+from scipy.differentiate import derivative
 import matplotlib.pyplot as plt
 import astropy.units as u
 import astropy.constants as const
@@ -12,10 +13,10 @@ c = (const.c.cgs).value
 e = (const.e.esu).value
 
 
-def calc_N_gamma_0(gamma, xi, xi_min=0.2):
+def calc_N_gam_0(gam, xi, xi_min):
     theta = (196 / 3) * (xi / xi_min)
-    beta = np.sqrt(1 - (1 / (gamma**2)))
-    return ((gamma**2) * beta * np.exp(-gamma / theta)) / (theta * kn(2, (1 / theta)))
+    beta = np.sqrt(1 - (1 / (gam**2)))
+    return ((gam**2) * beta * np.exp(-gam / theta)) / (theta * kn(2, (1 / theta)))
 
 
 def calc_E_dot(t, t_0, alpha, B_16):
@@ -35,7 +36,7 @@ def calc_Rn(t, v_n):
 
 def calc_EB_and_Bn(t, t_0, alpha, B_16, v_n, sigma):
     # time array should start exactly when the magnetar is born
-    E_B = np.zeros_like(t)
+    E_B = np.ones_like(t) * 1e50
     # ensuring everything is in cgs values so we input the erg/year unit instead of Gev/year
     E_dot = calc_E_dot(t, t_0, alpha, B_16)
     source_term = (sigma / (1 + sigma)) * E_dot
@@ -74,37 +75,69 @@ def calc_F(x):
         return F_x
 
 
-def calc_nu_c(gamma, t, t_0, alpha, B_16, v_n, sigma):
-    E_B, B_n = calc_EB_and_Bn(t, t_0, alpha, B_16, v_n, sigma)
-    return ((gamma**2) * e * B_n) / (2 * np.pi * m_e * c)
+def calc_nu_c(gam, B_n):
+    return ((gam**2) * e * B_n) / (2 * np.pi * m_e * c)
 
 
-def calc_P_nu(gamma, t, nu, t_0, alpha, B_16, v_n, sigma):
-    E_B, B_n = calc_EB_and_Bn(t, t_0, alpha, B_16, v_n, sigma)
-    nu_c = calc_nu_c(gamma, t, t_0, alpha, B_16, v_n, sigma)
+def calc_P_nu(nu, nu_c, B_n):
     return ((2 * (e**3) * B_n) / (np.sqrt(3) * m_e * (c**2))) * calc_F(nu / nu_c)
+
+
+def calc_j_nu(gam, N_gam, P_nu):
+    integrand = N_gam * P_nu / 4 / np.pi
+    return trapezoid(integrand, gam)
+
+
+def calc_alpha_nu(gam, nu, N_gam, P_nu):
+    d_by_dgam = derivative(N_gam / gam**2, gam)
+    integrand = ((gam**2) * P_nu * d_by_dgam) / (8 * np.pi * m_e * (nu**2))
+    return trapezoid(integrand, gam)
 
 
 # Test params
 
-gamma = np.logspace(0, 3, 1000)
+gam = np.logspace(0, 5, 1000)
 
 t = np.logspace(0, 5, 3000)
 
+
 xi = 5 * u.GeV.to(u.erg)
+xi_min = 0.2 * u.GeV.to(u.erg)
 alpha = 1.3
 B_16 = 1.0
 v_n = 3e8
-t_0 = 1e-5
+t_0 = 1
 sigma = 0.1
 
-# Plotting
+nu = 3e20
 
+N_gamma_0 = calc_N_gam_0(
+    gam,
+    xi,
+    xi_min,
+)
+
+E_B, B_N = calc_EB_and_Bn(t, t_0, alpha, B_16, v_n, sigma)
+
+print(B_N[0])
+
+nu_c = calc_nu_c(gam, B_N[0])
+
+print(nu_c)
+
+
+P_nu = calc_P_nu(nu, nu_c, B_N[0])
+
+j_nu = calc_j_nu(gam, N_gamma_0, P_nu)
+
+print(j_nu)
+
+# Plotting
+"""
 fig = plt.figure()
 
 ax = fig.add_subplot(111)
 
-E_B, B_n = calc_EB_and_Bn(t, t_0, alpha, B_16, v_n, sigma)
 
 plt.plot(
     t,
@@ -117,3 +150,4 @@ ax.set_xscale("log")
 ax.set_yscale("log")
 
 plt.show()
+"""
