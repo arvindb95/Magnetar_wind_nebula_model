@@ -1,151 +1,169 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.special import kn, kv
-from scipy.integrate import quad, trapezoid
+from tqdm import tqdm
+from scipy.integrate import trapezoid, quad
+from scipy.special import kv, kn
 import astropy.units as u
 import astropy.constants as const
 
 # ==========================================
-# 1. PHYSICAL CONSTANTS (CGS)
+# 1. PHYSICAL CONSTANTS
 # ==========================================
-m_e = const.m_e.cgs.value
-c = const.c.cgs.value
-e = const.e.esu.value
-sigma_T = const.sigma_T.cgs.value
-yr_to_sec = 3.154e7
+m_e = float(const.m_e.cgs.value)
+c   = float(const.c.cgs.value)
+e   = float(const.e.esu.value)
+sigma_T = float(const.sigma_T.cgs.value)
+alpha_fs = 1.0 / 137.036 
+yr_to_sec = 3.15576e7
 
 # ==========================================
-# 2. PHASE 1: THE ENGINE (Magnetar Inputs)
+# 2. MODEL C PARAMETERS
 # ==========================================
-def calc_E_dot(t, t_0, alpha, B_16):
-    E_b_star = 3e49 * (B_16**2) 
-    term = (alpha - 1) * (E_b_star / (t_0 * yr_to_sec)) * ((t / t_0) ** (-alpha))
-    if isinstance(t, np.ndarray): term[t < t_0] = 0
-    elif t < t_0: return 0
-    return term
+E_B_star = 4.9e51        
+t_0_yr   = 0.2           
+alpha    = 1.83          
+v_n      = 9e8           
+xi       = 0.1           
+xi_erg   = 0.1 * u.GeV.to(u.erg) 
 
-def calc_N_e_dot(t, t_0, alpha, B_16, xi, sigma=0.1):
-    E_dot = calc_E_dot(t, t_0, alpha, B_16)
-    return E_dot / (1 + sigma) / xi
+# Frequencies to Plot
+obs_freqs = [3.0e9, 1.4e9, 325e6] 
+freq_labels = ['3 GHz', '1.4 GHz', '325 MHz']
+freq_colors = ['blue', 'green', 'orange']
 
-def calc_N_gam_0(gam, xi, xi_min):
-    theta = (196 / 3) * (xi / xi_min)
-    gam = np.maximum(gam, 1.0001) 
-    beta = np.sqrt(1 - (1 / (gam**2)))
-    return ((gam**2) * beta * np.exp(-gam / theta)) / (theta * kn(2, (1 / theta)))
+# Grids
+t_years = np.logspace(-2, 2, 100000)      
+gamma_grid = np.logspace(0, 6, 120)       
 
 # ==========================================
-# 3. PHASE 2: THE ENVIRONMENT (B-Field & R)
+# 3. KERNELS
 # ==========================================
-def calc_EB_and_Bn(t_array_yr, t_0, alpha, B_16, v_n, sigma):
-    t_sec = t_array_yr * yr_to_sec
-    E_B = np.zeros_like(t_sec)
-    E_B[0] = 1e40  # Initial seed energy
+def get_synchrotron_kernel(x):
+    if x < 1e-5: return 2.15 * (x**(1/3))
+    elif x > 50.0: return 0.0
+    else:
+        integrand = lambda k: kv(5.0/3.0, k)
+        val, _ = quad(integrand, x, np.inf, limit=50)
+        return x * val
+F_x_exact = np.vectorize(get_synchrotron_kernel)
+
+def maxwell_juttner_exact(gam, theta):
+    gam = np.maximum(gam, 1.0001)
+    beta = np.sqrt(1 - 1/gam**2)
+    if theta < 1e-3: theta = 1e-3
+    norm = theta * kn(2, 1.0/theta)
+    if norm == 0: norm = 1.0 
+    return (gam**2 * beta * np.exp(-gam/theta)) / norm
+
+# ==========================================
+# 4. EVOLUTION LOOP
+# ==========================================
+t_sec = t_years * yr_to_sec
+N_e = np.zeros(len(gamma_grid))  
+E_B = 1e42                       
+
+L_storage = {nu: [] for nu in obs_freqs}
+times_plotted = []
+plot_stride = 500 
+
+print(f"Running Simulation with Bremsstrahlung...")
+
+for i in tqdm(range(1, len(t_sec))):
+    t = t_sec[i]
+    dt = t - t_sec[i-1]
     
-    E_dot_array = calc_E_dot(t_array_yr, t_0, alpha, B_16)
-    source_term = (sigma / (1 + sigma)) * E_dot_array
+    # --- Magnetar Engine ---
+    term = (t_sec[i] / (t_0_yr * yr_to_sec))
+    if term < 1: L_sd = (alpha - 1) * E_B_star / (t_0_yr * yr_to_sec)
+    else: L_sd = (alpha - 1) * E_B_star / (t_0_yr * yr_to_sec) * (term**(-alpha))
     
-    for i in range(1, len(t_sec)):
-        dt = t_sec[i] - t_sec[i - 1]
-        loss_rate = E_B[i - 1] / t_sec[i - 1]
-        E_B[i] = E_B[i - 1] + (source_term[i - 1] - loss_rate) * dt
-
-    R_n = v_n * t_sec
-    B_n = np.sqrt(6 * E_B / np.maximum(R_n**3, 1.0))
-    return B_n, R_n
-
-# ==========================================
-# 4. PHASE 3: EVOLUTION (The Solver)
-# ==========================================
-def evolve_electron_population(t_array_yr, gamma_grid, B_n_array, R_n_array, 
-                               t_0, alpha, B_16, xi, xi_min):
-    print("Running Phase 3: Electron Cooling Evolution...")
-    t_sec = t_array_yr * yr_to_sec
-    N_matrix = np.zeros((len(t_sec), len(gamma_grid)))
-    d_gamma = np.gradient(gamma_grid)
+    # --- Environment ---
+    sigma_mag = 0.01 
+    source = L_sd * (sigma_mag / (1 + sigma_mag))
+    loss = E_B / t
+    E_B += (source - loss) * dt
+    R = v_n * t
+    Vol = (4.0/3.0) * np.pi * R**3
+    B = np.sqrt(6 * E_B / Vol)
     
-    for i in range(1, len(t_sec)):
-        dt = t_sec[i] - t_sec[i-1]
-        N_old = N_matrix[i-1, :]
+    # --- COOLING RATES ---
+    # 1. Adiabatic 
+    g_dot_adiab = -gamma_grid / t
+    
+    # 2. Synchrotron 
+    U_B = B**2 / (8 * np.pi)
+    const_synch = (4.0/3.0) * sigma_T * U_B / (m_e * c)
+    g_dot_synch = -const_synch * (gamma_grid**2)
+    
+    # 3. Bremsstrahlung 
+    # Requires total number density n_e
+    N_total = trapezoid(N_e, gamma_grid)
+    n_density_total = N_total / Vol
+    
+    # Formula Eq 10: - (5/3) c sigma_T alpha_fs n_e gamma^(1/2)
+    g_dot_brem = -(5.0/3.0) * c * sigma_T * alpha_fs * n_density_total * np.sqrt(gamma_grid)
+    
+    g_dot = g_dot_adiab + g_dot_synch + g_dot_brem
+    
+    # --- Injection ---
+    L_part = L_sd * (1.0 / (1 + sigma_mag)) * xi
+    N_inj_rate = L_part / xi_erg 
+    theta_inj = (xi_erg / (m_e * c**2)) / 3.0 
+    shape = maxwell_juttner_exact(gamma_grid, theta_inj)
+    norm_shape = trapezoid(shape, gamma_grid)
+    if norm_shape > 0: shape /= norm_shape
+    Q_inj = N_inj_rate * shape
+    
+    # --- Update ---
+    flux = N_e * np.abs(g_dot); flux_in = np.roll(flux, -1); flux_in[-1] = 0 
+    dgamma = np.gradient(gamma_grid)
+    N_e += ((flux_in - flux)/dgamma + Q_inj) * dt
+    N_e = np.maximum(N_e, 0) 
+    
+    # --- Radiation ---
+    if i % plot_stride == 0:
+        times_plotted.append(t / yr_to_sec)
+        # Pre-calc shared geometry
+        n_dist = N_e / Vol
+        df_dgam = np.gradient(n_dist / gamma_grid**2, gamma_grid)
+        nu_crit_base = (3 * e * B * gamma_grid**2) / (4 * np.pi * m_e * c)
         
-        # Cooling Rates
-        g_dot = -(gamma_grid / t_sec[i]) - ((4.0/3.0) * sigma_T / (m_e * c)) * (B_n_array[i]**2 / (8*np.pi)) * (gamma_grid**2)
-        
-        # Injection
-        N_dot_inj = calc_N_e_dot(t_array_yr[i], t_0, alpha, B_16, xi)
-        shape = calc_N_gam_0(gamma_grid, xi, xi_min)
-        shape /= np.trapz(shape, gamma_grid)
-        
-        # Advection (Upwind Scheme)
-        flux = N_old * np.abs(g_dot)
-        flux_in = np.roll(flux, -1) ; flux_in[-1] = 0 
-        advection = (flux_in - flux) / d_gamma
-        
-        N_matrix[i, :] = np.maximum(N_old + (N_dot_inj * shape + advection) * dt, 0)
-        
-    return N_matrix
+        for nu_obs in obs_freqs:
+            x_args = nu_obs / nu_crit_base
+            F_values = F_x_exact(x_args)
+            P_single = (np.sqrt(3) * e**3 * B) / (m_e * c**2) * F_values
+            j_nu_4pi = trapezoid(N_e * P_single, gamma_grid)
+            
+            integrand_alpha = P_single * (gamma_grid**2) * df_dgam
+            integral_alpha = trapezoid(integrand_alpha, gamma_grid)
+            alpha_nu = -1 * integral_alpha / (8 * np.pi * m_e * nu_obs**2)
+            
+            if alpha_nu > 1e-30:
+                tau = alpha_nu * R
+                atten = (1.0 - np.exp(-tau)) / tau
+            else:
+                atten = 1.0
+            L_storage[nu_obs].append((4 * np.pi * j_nu_4pi) * atten)
 
 # ==========================================
-# 5. PHASE 4: RADIATION (The Spectrum)
+# 5. FINAL PLOT
 # ==========================================
-def calc_F(x):
-    return 1.78 * (x**0.297) * np.exp(-x)
-
-def calc_j_and_alpha(nu, N_gamma, gamma_grid, B_n):
-    nu_c = (3 * e * B_n * gamma_grid**2) / (4 * np.pi * m_e * c)
-    P_nu = ((np.sqrt(3) * e**3 * B_n) / (m_e * c**2)) * calc_F(nu / nu_c)
-    
-    j_nu = np.trapz(N_gamma * P_nu, gamma_grid) / (4 * np.pi)
-    
-    df_dgam = np.gradient(N_gamma / gamma_grid**2, gamma_grid)
-    alpha_nu = -1 * np.trapz((gamma_grid**2) * P_nu * df_dgam, gamma_grid) / (8 * np.pi * m_e * nu**2)
-    
-    return j_nu, alpha_nu
-
-# ==========================================
-# 6. MAIN EXECUTION
-# ==========================================
-# Setup Parameters
-t_years = np.logspace(-4, 2, 20000) 
-gamma_grid = np.logspace(0, 4.7, 100) 
-nu_obs = np.logspace(6, 14, 100) 
-
-B_16, v_n, sigma = 1, 2e9, 0.1
-t_0, alpha = 1.0, 1.3
-xi = 1.0 * u.GeV.to(u.erg)
-xi_min = 0.5 * u.GeV.to(u.erg)
-
-# Run Simulation
-B_n, R_n = calc_EB_and_Bn(t_years, t_0, alpha, B_16, v_n, sigma)
-N_gam_history = evolve_electron_population(t_years, gamma_grid, B_n, R_n, t_0, alpha, B_16, xi, xi_min)
-
-# Plot Results
+times_plotted = np.array(times_plotted)
 plt.figure(figsize=(10, 7))
-target_years = [1, 3, 10, 30]
-colors = ['red', 'orange', 'green', 'blue']
 
-for i, yr in enumerate(target_years):
-    idx = np.argmin(np.abs(t_years - yr))
-    current_N, current_B, current_R = N_gam_history[idx], B_n[idx], R_n[idx]
-    
-    L_nu_array = []
-    for freq in nu_obs:
-        j, alpha_val = calc_j_and_alpha(freq, current_N, gamma_grid, current_B)
-        if alpha_val > 1e-30:
-            tau = alpha_val * current_R
-            L_nu = ((4/3) * np.pi * current_R**3) * (4 * np.pi * j) * ((1 - np.exp(-tau)) / tau)
-        else:
-            L_nu = ((4/3) * np.pi * current_R**3) * 4 * np.pi * j
-        L_nu_array.append(L_nu)
-    
-    plt.loglog(nu_obs / 1e9, L_nu_array, lw=2, color=colors[i], label=f'{yr} yrs')
+# Plot Data
+for nu, color, label in zip(obs_freqs, freq_colors, freq_labels):
+    L_data = np.array(L_storage[nu])
+    mask = (L_data > 0) & np.isfinite(L_data)
+    plt.loglog(times_plotted[mask], L_data[mask], 
+               linewidth=2.5, color=color, label=label)
 
-plt.xlabel(r'Frequency [GHz]', fontsize=14)
+
+plt.xlabel('Time [Years]', fontsize=14)
 plt.ylabel(r'Luminosity $L_\nu$ [erg/s/Hz]', fontsize=14)
-plt.title(r'Nebula Evolution', fontsize=16)
+plt.title(f'Model C', fontsize=16)
+plt.grid(True, which='both', alpha=0.3)
 plt.legend(fontsize=12)
-plt.grid(True, which="both", alpha=0.3)
-plt.xlim(1e-3, 1e5)
-plt.ylim(bottom=1e26)
-plt.tight_layout()
+plt.ylim(1e26, 1e36)
+plt.xlim(0.1, 100)
 plt.show()
