@@ -1,0 +1,6 @@
+MWN_model_backup.py
+__pycache__/
+
+# MCMC outputs: regenerable, and the chain is 20 MB
+FRB121102_MWN_fit.h5
+mcmc_run.log
