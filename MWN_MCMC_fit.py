@@ -32,8 +32,13 @@ fixed_params = {
     "sigma": 0.1,  # magnetisation of the injected outflow
     "B_16": 1.0,  # unused, E_B_star is fitted directly instead of eq. (1)
     "t_0": 0.2,  # yr ; these data do not constrain it, so it is fixed as in the paper
-    "n_gam": 150,  # Lorentz factor grid points
-    "n_t": 400,  # time steps from t_0 to t_age
+    # grid: coarse enough for ~0.2 s per likelihood call, fine enough that the
+    # model error (0.2% on RM, 3.5% on the fluxes) stays well inside the 10% data
+    # errors.  kin_min is a floor on gam - 1, see calc_gam_grid.
+    "kin_min": 1e-4,
+    "gam_max": 1e5,
+    "n_gam": 250,  # Lorentz factor grid points
+    "n_t": 600,  # time steps from t_0 to t_age
     "z": 0.1927,  # redshift of FRB 121102
     "D_L_Mpc": 972.0,  # Mpc ; luminosity distance
 }
@@ -88,7 +93,8 @@ RM_err = 0.10 * RM_obs
 
 
 def MWN_flux_density(
-    nu, E_B_star, t_0, alpha, v_n, t_age, xi, xi_min, sigma, B_16, n_gam, n_t, z, D_L_Mpc
+    nu, E_B_star, t_0, alpha, v_n, t_age, xi, xi_min, sigma, B_16, kin_min, gam_max,
+    n_gam, n_t, z, D_L_Mpc,
 ):
     """
     Evolves eq. (7) from t_0 to t_age for one parameter set and returns the flux
@@ -97,7 +103,7 @@ def MWN_flux_density(
 
     t_0 and t_age come in years, everything internal is cgs and seconds.
     """
-    gam, du, dgam = calc_gam_grid(1e-6, 1e5, n_gam)
+    gam, du, dgam = calc_gam_grid(kin_min, gam_max, n_gam)
     t = np.logspace(np.log10(t_0 * yr), np.log10(t_age * yr), n_t)
 
     # nu_arr is left empty so that no light curve is built at every step -- only

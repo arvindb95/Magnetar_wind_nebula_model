@@ -61,11 +61,15 @@ is what makes `t_age` identifiable, as in the paper. Four free parameters: `E_B*
 in the paper (`t_0` is not constrained by these data). The paper's own Fig. 1 limits
 `t_age > 6 yr` and `2 R_n < 0.66 pc` are imposed as priors.
 
+The grid used inside the likelihood is set in `fixed_params` and is coarser than the
+default, for ~0.23 s per call: the resulting model error (0.2% on the RM, 3.5% on the
+fluxes) stays well inside the 10% data errors.
+
 `MCMC_plotter.py` reports the best fit, the corner plot and the walks.
 
 ![Best fit spectrum](MWN_best_fit_spectrum.jpg)
 
-64 walkers x 3028 steps, autocorrelation time 51–70.
+64 walkers x 3000 steps, autocorrelation time 57–75.
 
 ![Corner plot](best_fit_corner_plot_MWN.jpg)
 
@@ -76,11 +80,11 @@ only their product `R_n` is measured. Dashed crosshairs mark the MAP.
 
 | parameter | marginal | MAP | model A | model B | model C |
 |---|---|---|---|---|---|
-| `log10(E_B*/erg)` | 50.82 (+0.10, −0.07) | 50.88 | 50.70 | 50.70 | 51.69 |
-| `alpha`           | 1.71 (+0.12, −0.22)  | 1.83  | 1.30  | 1.30  | 1.83  |
-| `log10(v_n)`      | 8.88 (+0.08, −0.13)  | 8.94  | 8.48  | 8.00  | 8.95  |
-| `log10(t_age/yr)` | 0.81 (+0.13, −0.03)  | 0.80  | 1.09  | 1.58  | 1.12  |
-| **`R_n = v_n t_age`** | **1.66e17 cm (±11%)** | 1.72e17 | 1.17e17 | 1.19e17 | 3.72e17 |
+| `log10(E_B*/erg)` | 50.83 (+0.10, −0.08) | 50.90 | 50.70 | 50.70 | 51.69 |
+| `alpha`           | 1.68 (+0.16, −0.18)  | 1.86  | 1.30  | 1.30  | 1.83  |
+| `log10(v_n)`      | 8.88 (+0.08, −0.13)  | 8.96  | 8.48  | 8.00  | 8.95  |
+| `log10(t_age/yr)` | 0.82 (+0.13, −0.04)  | 0.79  | 1.09  | 1.58  | 1.12  |
+| **`R_n = v_n t_age`** | **1.68e17 cm (±11%)** | 1.74e17 | 1.17e17 | 1.19e17 | 3.72e17 |
 
 Quote the marginal column as the constraint; the MAP is the actual best-fitting sample
 and is what the curves above are drawn at. **These differ because the parameters are
@@ -93,20 +97,21 @@ The fit lands on model A's energy scale and model C's `alpha` and `v_n`, with a 
 radius between the two. `R_n` is the best-determined quantity — consistent with the
 paper's analytic argument (eqs. 17–22) that `E_B*` and `R_n` are what the RM and the
 self-absorption constraint actually pin down. At the MAP the RM comes out
-1.438e5 rad m^-2 against the observed 1.46e5 (0.15 sigma).
+1.4608e5 rad m^-2 against the observed 1.46e5.
 
 Two honest caveats:
 
 - **Reduced chi^2 = 16** (chi^2 = 48.6, 3 dof). 79% of it comes from the two lowest
   frequencies: 1.63 GHz (model 133 vs 250 uJy) and 3 GHz (290 vs 206); every other
-  point is within 2 sigma and the RM within 0.2 sigma. This is the same failure the
-  paper reports — the one-zone model's self-absorption turnover is sharper than the
-  observed spectrum. The assumed 10% errors are also optimistic for a source known to
-  vary.
-- **`t_age` rails against the 6 yr prior floor** (24% of samples within 0.05 dex of it).
+  point is within 2 sigma and the RM is matched essentially exactly. This is the same
+  failure the paper reports — the one-zone model's self-absorption turnover is sharper
+  than the observed spectrum. The assumed 10% errors are also optimistic for a source
+  known to vary.
+- **`t_age` rails against the 6 yr prior floor** (23% of samples within 0.05 dex of it).
   The spectrum and RM on their own prefer a younger, faster-expanding nebula than the
   paper's 12.4 yr; the 6 yr limit comes from the source having been active since
-  discovery, not from these data.
+  discovery, not from these data. `alpha` also pushes lightly against its upper bound
+  of 1.95 (3% of samples), which is set by eq. (11) being singular at `alpha = 2`.
 
 ## Usage
 

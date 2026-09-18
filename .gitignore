@@ -2,8 +2,9 @@ MWN_model_backup.py
 __pycache__/
 
 # MCMC outputs: regenerable, and the chain is 20 MB
-FRB121102_MWN_fit.h5
+FRB121102_MWN_fit*.h5
 mcmc_run.log
+.mcmc_pid
 
 # author-provided reference fits, not ours to redistribute
 Margalit_model_test/
