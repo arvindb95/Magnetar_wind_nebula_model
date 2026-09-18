@@ -4,3 +4,8 @@ __pycache__/
 # MCMC outputs: regenerable, and the chain is 20 MB
 FRB121102_MWN_fit.h5
 mcmc_run.log
+
+# author-provided reference fits, not ours to redistribute
+Margalit_model_test/
+compare_with_Margalit.py
+Margalit_comparison.png

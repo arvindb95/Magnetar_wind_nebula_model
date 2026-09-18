@@ -29,8 +29,16 @@ crossings).
 | B | 5e50   | 0.6 | 1e8 | 1.30 | 44.5 yr | 37.8 yr |
 | C | 4.9e51 | 0.2 | 9e8 | 1.83 | 15.1 yr | 13.1 yr |
 
-Agreement is a consistent ~18%, well outside grid convergence (0.1%). The paper
-states no numerical method, so ~20% is taken to be the achievable agreement.
+Agreement is a consistent ~18%, well outside grid convergence (0.1%).
+
+That offset is **entirely** in the rotation measure, not in the dynamics. `t_age` is
+defined by where RM crosses the observed value, so an offset in RM maps straight onto
+one in `t_age`: `(RM ratio)^(1/|dlnRM/dlnt|)` reproduces the measured `t_age` ratio to
+0.4% for both models. Everything the RM does *not* depend on — `B_n`, `R_n`, `E_B`,
+the total electron count, and the whole synchrotron spectrum — reproduces the paper
+to well under a per cent. The RM normalisation itself, specifically the weighting
+applied to the sub-relativistic electrons that dominate eq. (16), is still being
+checked with the author.
 
 ### Spectra and light curves (paper Fig. 4)
 
@@ -114,7 +122,7 @@ import numpy as np
 import MWN_model as M
 from MWN_model import yr
 
-gam, du, dgam = M.calc_gam_grid(1.0, 1e5, 500)
+gam, du, dgam = M.calc_gam_grid(1e-6, 1e5, 500)
 t = np.logspace(np.log10(0.2 * yr), np.log10(43 * yr), 3000)   # seconds
 
 snaps, RM, L_nu, N_tot, B_n, R_n = M.calc_L_nu_N_gam_t(
@@ -149,21 +157,55 @@ makes the implicit system bidiagonal and solvable in a single `solve_banded` cal
 Expansion is applied as the exact factor `(t_prev/t)^3`, so particle number is
 conserved to 1e-6. One model run takes ~5 s.
 
-## Two deliberate departures from the printed paper
+### The Lorentz factor grid
 
-1. **Eq. (7) sign.** The paper prints `dN/dt + d(gdot N)/dgam - 3(Rdot_n/R_n) N_gam = N_gam_dot`.
-   `N_gam` is a number *density*, so expansion must dilute it and the sign has to be
-   `+3`. With the printed `-3` the nebula ends up with 3.8e9 times the electrons it was
-   ever injected. Set `EXPANSION_SIGN = -1.0` to reproduce the printed version.
-2. **Eq. (10) gets an extra `beta`.** As printed, bremsstrahlung stays finite at
-   `gam = 1` and cools electrons off the bottom of the grid. The `beta` restores the
-   `v/c` scaling so `gamma_dot -> 0` as `gam -> 1`.
+`calc_gam_grid(kin_min, gam_max, n_gam)` is log spaced in the **kinetic energy**
+`u = gam - 1`, not in `gam`, so its first argument is a floor on `gam - 1`
+(`1e-6` by default, i.e. `gam_min = 1.000001`).
+
+This matters for the rotation measure and therefore for any source whose RM is used
+to date the nebula. Electrons cool down through the mildly relativistic regime and
+end up at `gam -> 1`, where eq. (16)'s `1/gam^2` weight saturates at 1, so the RM is
+dominated by them. On a grid log spaced in `gam` the entire cooled population piles
+into the single bottom cell — for model A that one cell carried **43% of the whole RM
+integral**, making the answer a function of the grid floor rather than of the physics.
+Spacing in `u` lets them keep cooling: eq. (8) gives `u_dot = -2u/t` as `beta^2 -> 2u`,
+which is the correct non-relativistic law `u ~ 1/R_n^2`. The RM is then converged —
+it moves by <0.2% as `kin_min` goes from `1e-4` to `1e-8`, and the bottom cell
+contributes 0.0%.
+
+## One deliberate departure from the printed paper
+
+**Eq. (7) sign.** The paper prints
+`dN_gam/dt + d(gam_dot N_gam)/dgam - 3(Rdot_n/R_n) N_gam = N_gam_dot`. `N_gam` is a
+number *density*, so integrating over `gam` with no flux through the boundaries gives
+`d/dt (V_n int N_gam dgam) = +3 (Rdot_n/R_n) V_n int N_gam dgam` — the electron count
+would grow as `V_n^2` instead of being conserved. Over model A the printed sign ends
+with **3.8e9 times** the electrons the magnetar ever injected and `RM = 2.4e15` against
+the observed `1.46e5 rad m^-2`. The code therefore uses `+3`;
+set `EXPANSION_SIGN = -1.0` to reproduce the printed version.
+
+Every other equation is transcribed verbatim.
 
 ## Known caveats
 
-- The light-curve index `F_nu ~ t^-(alpha^2 + 7 alpha - 2)/4` does **not** hold at a
-  fixed 3 GHz — measured −3.6 (A) and −6.2 (C) against the predicted −2.2 and −3.5.
-  The RM index `-(6 + alpha)/2` does hold and is asserted by the tests.
+- **The light-curve index `F_nu ~ t^-(alpha^2 + 7 alpha - 2)/4` is never attained.**
+  It assumes `nu_SSA < nu << nu_c(gam_bar)`, i.e. that the emission comes from the
+  `N_gam ~ gam^-alpha` part of the electron spectrum. But the light curve at a fixed
+  frequency already peaks at `nu ~ 0.3 nu_c(gam_bar)`, and `nu_c(gam_bar) ~ B_n ~
+  t^-(2+alpha)/2` falls quickly, so `nu` crosses into the exponential Maxwellian cutoff
+  within a factor ~2 in time after the peak. The window where the index would apply is
+  squeezed shut. Measured for model A at 3 GHz: −2.9 just after the peak (predicted
+  −2.2), steepening to −5.6 by `6 t_peak`; model C gives −4.0 steepening to −7.9
+  (predicted −3.5). Same at 1.4 GHz and 325 MHz. This is the paper's own pair of
+  caveats — "our representative models are not yet within this regime at GHz
+  frequencies" and "at late times an exponential cutoff due to the Maxwellian injection
+  distribution steepens the slope significantly" — and there is no time in between.
+  The RM index `-(6 + alpha)/2` *does* hold and is asserted by the tests.
+- Eq. (10) is the ultra-relativistic bremsstrahlung limit, so it stays finite at
+  `gam = 1` instead of falling off as `v/c`. That would drain the bottom cell, but the
+  solver's zero-flux floor stops it, and brem is ~2e-5 of the total cooling rate at
+  every `gam` for these parameters, so it changes nothing measurable.
 - Eq. (19) is a scaling, not a normalisation: at model A / 12.4 yr it gives
   `1.1e6 rad m^-2`, 7.7x the observed value, because eq. (18) assumes all of `E_B*` has
   been injected (only 71% has by `t_age`) and that every electron sits at `gam = 1`.

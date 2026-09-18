@@ -61,17 +61,24 @@ def calc_N_gam_inj(gam, dgam, xi, xi_min):
     return psi / np.sum(psi * dgam)
 
 
-def calc_gam_grid(gam_min=1.0, gam_max=1e5, n_gam=500):
+def calc_gam_grid(kin_min=1e-6, gam_max=1e5, n_gam=500):
     """
-    Log spaced Lorentz factor grid, its log step du = d(ln gam), and the exact
-    finite volume cell widths (cell edges sit at the geometric means
-    sqrt(gam_j gam_j+1), so dgam = 2 gam sinh(du/2) in every cell including the
-    two ends).  gam starts at exactly 1, where beta = 0 and eqs. (8) and (9)
-    therefore vanish on their own.
+    Lorentz factor grid, log spaced in the KINETIC energy u = gam - 1 rather than
+    in gam, plus that log step du = d(ln u) and the finite volume cell widths
+    (cell edges at the geometric means of u, so du_j = 2 u_j sinh(du/2); widths in
+    u and in gam are the same thing).
+
+    Spacing in u instead of gam is what lets electrons keep cooling once they
+    become sub-relativistic.  Eq. (8) already handles this correctly: gam_dot =
+    -gam beta^2 /t with beta^2 -> 2u gives u_dot = -2u/t, i.e. the kinetic energy
+    falls as 1/R_n^2, which is the right non-relativistic adiabatic law.  On a
+    grid log spaced in gam the whole cooled population instead piles into the
+    single bottom cell at gam = 1, which then carries ~40 per cent of the eq. (16)
+    RM integral -- an artefact of the floor, not physics.
     """
-    gam = np.logspace(np.log10(gam_min), np.log10(gam_max), n_gam)
-    du = np.log(gam[1] / gam[0])
-    return gam, du, 2.0 * gam * np.sinh(du / 2.0)
+    u = np.logspace(np.log10(kin_min), np.log10(gam_max - 1.0), n_gam)
+    du = np.log(u[1] / u[0])
+    return 1.0 + u, du, 2.0 * u * np.sinh(du / 2.0)
 
 
 def calc_E_dot(t, t_0, alpha, B_16, E_B_star=None):
@@ -205,13 +212,11 @@ def calc_alpha_nu(gam, nu, N_gam, P_nu, du=None):
     """
     Synchrotron self absorption coefficient, eq. (13).
 
-    Note the leading minus sign of eq. (13), and that d/dgam(N_gam/gam^2) is
-    taken in u = ln(gam), where the grid is uniform so np.gradient is second
-    order: d/dgam = (1/gam) d/du.
+    Note the leading minus sign of eq. (13).  The derivative is taken against the
+    gam array itself, so it stays second order on the non uniform grid that
+    calc_gam_grid returns (du is accepted only for backwards compatibility).
     """
-    if du is None:
-        du = np.log(gam[1] / gam[0])
-    d_by_dgam = np.gradient(N_gam / gam**2, du) / gam
+    d_by_dgam = np.gradient(N_gam / gam**2, gam)
     integrand = ((gam**2) * P_nu * d_by_dgam) / (8 * np.pi * m_e * (nu**2))
     return -trapezoid(integrand, gam)
 
@@ -227,10 +232,11 @@ def calc_K_matrix(gam):
 
 def calc_alpha_nu_at_nu_c(gam, du, dgam, N_gam, B_n, K):
     """
-    eq. (13) evaluated at nu = nu_c(gam) for every gam at once, as one matvec,
-    using gam^2 d/dgam(N_gam/gam^2) dgam = gam d/du(N_gam/gam^2) dgam.
+    eq. (13) evaluated at nu = nu_c(gam) for every gam at once, as one matvec.
+    The derivative is taken against gam itself so it is second order on the non
+    uniform grid of calc_gam_grid (du is kept only for backwards compatibility).
     """
-    v = gam * np.gradient(N_gam / gam**2, du) * dgam
+    v = (gam**2) * np.gradient(N_gam / gam**2, gam) * dgam
     nu_c = calc_nu_c(gam, B_n)
     P_pref = (2 * (e**3) * B_n) / (np.sqrt(3) * m_e * (c**2))  # eq. (14)
     return -(P_pref * (K @ v)) / (8 * np.pi * m_e * (nu_c**2))
@@ -284,12 +290,12 @@ def calc_gamma_dot_brem(gam, n_e):
     """
     Bremsstrahlung cooling, eq. (10).
 
-    Eq. (10) is the ultra relativistic limit and stays finite at gam = 1, which
-    would cool electrons straight off the bottom of the grid; the extra beta
-    restores the v/c scaling so gamma_dot -> 0 as gam -> 1.
+    This is the ultra relativistic limit, so it stays finite at gam = 1 rather
+    than falling off as v/c.  Harmless here: the zero flux floor in the solver
+    stops the bottom cell draining, and brem is ~2e-5 of the total cooling rate
+    at every gam for these parameters.
     """
-    beta = np.sqrt(1 - 1 / gam**2)
-    return -(5 / 3) * c * sigma_t * alpha_fs * n_e * gam ** (1.2) * beta
+    return -(5 / 3) * c * sigma_t * alpha_fs * n_e * gam ** (1.2)
 
 
 def calc_L_rad(dgam, N_gam, gamma_dot_syn, V_n):
@@ -431,7 +437,7 @@ def calc_L_nu_N_gam_t(
 if __name__ == "__main__":
     # Model A of the paper: E_B_star = 5e50 erg, t_0 = 0.2 yr, v_n = 3e8 cm/s,
     # alpha = 1.3, chi = 0.2 GeV, sigma = 0.1, giving t_age ~ 12.4 yr.
-    gam, du, dgam = calc_gam_grid(1.0, 1e5, 500)
+    gam, du, dgam = calc_gam_grid(1e-6, 1e5, 500)
 
     xi = 0.2 * u.GeV.to(u.erg)
     xi_min = 0.2 * u.GeV.to(u.erg)

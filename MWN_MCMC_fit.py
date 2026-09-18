@@ -97,7 +97,7 @@ def MWN_flux_density(
 
     t_0 and t_age come in years, everything internal is cgs and seconds.
     """
-    gam, du, dgam = calc_gam_grid(1.0, 1e5, n_gam)
+    gam, du, dgam = calc_gam_grid(1e-6, 1e5, n_gam)
     t = np.logspace(np.log10(t_0 * yr), np.log10(t_age * yr), n_t)
 
     # nu_arr is left empty so that no light curve is built at every step -- only
