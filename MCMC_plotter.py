@@ -13,10 +13,11 @@ from chainconsumer import (
 )
 import pandas as pd
 from astropy.table import Table
-from tqdm import tqdm
 
 from MWN_MCMC_fit import (
     MWN_flux_density,
+    flux_band,
+    theta_to_params,
     fixed_params,
     freqs,
     fluxes,
@@ -100,19 +101,7 @@ mcmc_best_fit_tab.write("mcmc_best_fit_params_MWN.txt", format="ascii", overwrit
 ## ------------ Report the best fit ------------ ##
 
 
-def params_from_theta(theta):
-    """
-    Turns a vector of sampled parameters into the kwargs MWN_flux_density wants.
-    """
-    out = {}
-    for i in range(len(tab_labels)):
-        out.update(
-            {var_params_names[i]: 10 ** theta[i] if param_scale_log[i] else theta[i]}
-        )
-    return out
-
-
-best_fit_params = params_from_theta(map_values)
+best_fit_params = theta_to_params(map_values)
 
 model_flux, model_RM = MWN_flux_density(freqs, **best_fit_params, **fixed_params)
 
@@ -197,24 +186,14 @@ ax.errorbar(
 
 nu_range = np.logspace(np.log10(0.3), np.log10(60), 60)
 
-# 1 sigma spread from a random subset of the chain
-n_draw = 400
-draws = samples[np.random.randint(len(samples), size=n_draw)]
-flux_draws = np.zeros((n_draw, len(nu_range)))
-
+# 1 sigma spread from a random subset of 400 samples of the chain
 print("Calculating errors on F_nu")
-
-for p in tqdm(range(n_draw)):
-    flux_draws[p], _ = MWN_flux_density(
-        nu_range, **params_from_theta(draws[p]), **fixed_params
-    )
-
-center_values = np.percentile(flux_draws, [16, 50, 84], axis=0)
+center_values = flux_band(samples, nu_range)
 
 ax.fill_between(
     nu_range,
     y1=center_values[0],
-    y2=center_values[2],
+    y2=center_values[1],
     color="C0",
     alpha=0.3,
     zorder=-1,
