@@ -139,17 +139,43 @@ def lnprior(theta):
         return -np.inf
 
 
+def theta_to_params(theta):
+    """
+    Turns a vector of sampled parameters (log10 where param_scale_log) into the
+    kwargs MWN_flux_density wants.
+    """
+    return {
+        name: 10 ** theta[i] if param_scale_log[i] else theta[i]
+        for i, name in enumerate(var_params_names)
+    }
+
+
+def flux_band(samples, nu, q=(16, 84), n_draw=400, t_age=None, seed=0):
+    """
+    Error region of the model: percentiles q (default 1 sigma) of the flux
+    density (uJy) at nu (GHz) over a random subset of n_draw posterior samples
+    (theta space, e.g. reader.get_chain(flat=True)).  Returns (len(q), len(nu)).
+    With t_age (yr, scalar or array) the samples' t_age is replaced by it, so an
+    array gives the light curves instead: shape (len(q), len(t_age), len(nu)).
+    """
+    draws = np.asarray(samples)
+    if len(draws) > n_draw:
+        draws = draws[np.random.default_rng(seed).choice(len(draws), n_draw, replace=False)]
+    ages = [None] if t_age is None else np.atleast_1d(t_age)
+    f_nu = np.zeros((len(draws), len(ages), len(np.atleast_1d(nu))))
+    for p, theta in enumerate(draws):
+        params = theta_to_params(theta)
+        for k, age in enumerate(ages):
+            if age is not None:
+                params["t_age"] = age
+            f_nu[p, k] = MWN_flux_density(nu, **params, **fixed_params)[0]
+    band = np.percentile(f_nu, q, axis=0)
+    return band[:, 0] if t_age is None or np.ndim(t_age) == 0 else band
+
+
 def lnlike(theta, nu, F_obs, F_err):
-    new_var_param_dict = {}
-
-    for var_i in range(len(var_params_names)):
-        if param_scale_log[var_i]:
-            new_var_param_dict.update({var_params_names[var_i]: 10 ** (theta[var_i])})
-        else:
-            new_var_param_dict.update({var_params_names[var_i]: theta[var_i]})
-
     try:
-        f_nu, RM = MWN_flux_density(nu, **new_var_param_dict, **fixed_params)
+        f_nu, RM = MWN_flux_density(nu, **theta_to_params(theta), **fixed_params)
     except (ValueError, FloatingPointError):
         return -np.inf
 
